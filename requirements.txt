@@ -1,0 +1,6 @@
+# OpenVino
+openvino
+
+# Testing
+pytest
+pytest-xdist
