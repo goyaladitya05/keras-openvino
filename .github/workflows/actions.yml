@@ -1,0 +1,61 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  run_cpu_tests:
+    strategy:
+      fail-fast: false
+
+    name: Run tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      KERAS_HOME: .github/workflows/config
+
+    steps:
+      - name: Checkout keras-openvino ${{ github.ref }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: keras-openvino
+          persist-credentials: false
+ 
+      - name: Checkout keras
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: keras-team/keras
+          ref: pluggable_backend
+          path: keras
+          persist-credentials: false
+ 
+      - name: Install Python dependencies
+        run: |
+          pip install -r keras/requirements.txt
+          pip install -r keras-openvino/requirements.txt
+
+      - name: Install keras-openvino
+        working-directory: ./keras-openvino
+        run: pip install -e .
+
+      - name: Test integrations
+        working-directory: ./keras
+        run: |
+          python integration_tests/import_test.py
+          python integration_tests/numerical_test.py
+
+      - name: Run Tests
+        working-directory: ./keras
+        run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
