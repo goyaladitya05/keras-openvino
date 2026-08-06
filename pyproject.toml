@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools >=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keras-openvino"
+authors = [
+    {name = "OpenVINO Developers", email = "openvino@intel.com"},
+]
+description = "OpenVINO backend for Keras"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Apache License 2.0"}
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: Unix",
+    "Operating System :: MacOS",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development",
+]
+dependencies = [
+    "keras",
+    "numpy",
+    "openvino",
+]
+
+[project.urls]
+Home = "https://docs.openvino.ai/"
+Repository = "https://github.com/openvinotoolkit/keras-openvino/"
+
+[tool.setuptools.dynamic]
+version = {attr = "keras_openvino.src.version.__version__"}
+
+[tool.setuptools.package-dir]
+"" = "."
+
+[tool.ruff]
+line-length = 80
