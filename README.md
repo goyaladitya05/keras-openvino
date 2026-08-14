@@ -1,4 +1,4 @@
-# OpenVino backend implementation for Keras
+# OpenVINO backend implementation for Keras
 
 ## Local development
 
