@@ -38,6 +38,7 @@ keras/src/ops/math_test.py::MathDtypeTest::test_gammainc_('uint8', 'int32')
 keras/src/ops/math_test.py::MathDtypeTest::test_gammainc_('uint8', 'int8')
 keras/src/ops/math_test.py::MathDtypeTest::test_gammainc_('uint8', 'uint16')
 keras/src/ops/math_test.py::MathDtypeTest::test_gammainc_('uint8', 'uint32')
+# https://github.com/openvinotoolkit/openvino/issues/34138
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_erfinv_operation_basic
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_erfinv_operation_dtype
 keras/src/ops/math_test.py::MathOpsCorrectnessTest::test_gammainc
