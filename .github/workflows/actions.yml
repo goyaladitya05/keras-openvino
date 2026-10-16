@@ -6,6 +6,12 @@ on:
   pull_request:
   release:
     types: [created]
+  workflow_call:
+    outputs:
+      keras-sha:
+        value: ${{ jobs.run_cpu_tests.outputs.keras-sha }}
+      failed-tests:
+        value: ${{ jobs.run_cpu_tests.outputs.failed-tests }}
 
 permissions:
   contents: read
@@ -22,6 +28,9 @@ jobs:
     name: Run tests
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    outputs:
+      keras-sha: ${{ steps.keras.outputs.sha }}
+      failed-tests: ${{ steps.summary.outputs.failed }}
 
     env:
       KERAS_HOME: ../keras-openvino/.github/workflows/config
@@ -40,6 +49,10 @@ jobs:
           ref: master
           path: keras
           persist-credentials: false
+
+      - name: Record keras commit
+        id: keras
+        run: echo "sha=$(git -C keras rev-parse HEAD)" >> "$GITHUB_OUTPUT"
  
       - name: Install Python dependencies
         run: |
@@ -56,7 +69,22 @@ jobs:
 
       - name: Run Tests
         working-directory: ./keras
-        run: pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers
+        run: |
+          set -o pipefail
+          pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers | tee "$RUNNER_TEMP/pytest.log"
+
+      - name: Collect failed tests
+        id: summary
+        if: always()
+        run: |
+          failed=$(grep -E '^(FAILED|ERROR) ' "$RUNNER_TEMP/pytest.log" 2>/dev/null | sed -E 's/ - .*$//' || true)
+          count=$(printf '%s' "$failed" | grep -c . || true)
+          {
+            echo "failed<<EOF_FAILED"
+            printf '%s\n' "$failed" | head -n 30
+            if [ "$count" -gt 30 ]; then echo "... and $((count - 30)) more"; fi
+            echo "EOF_FAILED"
+          } >> "$GITHUB_OUTPUT"
 
       # TODO integration tests
 
