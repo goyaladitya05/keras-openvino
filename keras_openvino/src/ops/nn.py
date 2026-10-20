@@ -3,12 +3,12 @@ import openvino.opset16 as ov_opset
 from openvino import Type
 
 import keras_openvino.src.ops.numpy as onp
+from keras.src.backend.common import result_type
+from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import (
     _get_output_shape_given_tf_padding,
 )
 from keras.src.backend.common.backend_utils import canonicalize_axis
-from keras.src.backend.common.dtypes import result_type
-from keras.src.backend.common.variables import standardize_dtype
 from keras.src.backend.config import epsilon
 from keras.src.backend.config import floatx
 from keras.src.backend.config import standardize_data_format

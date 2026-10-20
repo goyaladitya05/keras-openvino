@@ -12,13 +12,12 @@ from openvino import Type
 from openvino import compile_model
 
 from keras.src import tree
+from keras.src.backend.common import KerasTensor
 from keras.src.backend.common import KerasVariable
-from keras.src.backend.common import dtypes
+from keras.src.backend.common import StatelessScope
+from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import slice_along_axis
-from keras.src.backend.common.dtypes import result_type
-from keras.src.backend.common.keras_tensor import KerasTensor
-from keras.src.backend.common.stateless_scope import StatelessScope
 from keras_openvino.src.utils import OPENVINO_DTYPES
 from keras_openvino.src.utils import align_operand_types
 from keras_openvino.src.utils import get_device
@@ -628,7 +627,7 @@ def get_ov_output(x, ov_type=None, context_dtype=None):
         and ov_type is None
         and context_dtype is not None
     ):
-        ov_type = OPENVINO_DTYPES[dtypes.result_type(context_dtype, type(x))]
+        ov_type = OPENVINO_DTYPES[result_type(context_dtype, type(x))]
     if isinstance(x, float):
         if ov_type is None:
             ov_type = Type.f32

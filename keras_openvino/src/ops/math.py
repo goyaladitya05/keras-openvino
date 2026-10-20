@@ -4,7 +4,7 @@ import openvino.opset17 as ov_opset17
 import scipy.signal
 from openvino import Type
 
-from keras.src.backend.common import dtypes
+from keras.src.backend.common import result_type
 from keras.src.backend.common import standardize_dtype
 from keras_openvino.src.ops import numpy as ov_numpy
 from keras_openvino.src.ops.core import OpenVINOKerasTensor
@@ -236,10 +236,10 @@ def cdist(x, y):
 
     x_type = ov_to_keras_type(x.get_element_type())
     y_type = ov_to_keras_type(y.get_element_type())
-    result_type = dtypes.result_type(x_type, y_type, float)
-    result_type = OPENVINO_DTYPES[result_type]
-    x = ov_opset.convert(x, result_type).output(0)
-    y = ov_opset.convert(y, result_type).output(0)
+    output_dtype = result_type(x_type, y_type, float)
+    output_dtype = OPENVINO_DTYPES[output_dtype]
+    x = ov_opset.convert(x, output_dtype).output(0)
+    y = ov_opset.convert(y, output_dtype).output(0)
 
     x_shape = x.get_partial_shape()
     y_shape = y.get_partial_shape()

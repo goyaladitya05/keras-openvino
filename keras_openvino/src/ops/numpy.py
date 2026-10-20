@@ -8,10 +8,10 @@ from openvino import Type
 
 from keras.src.backend import config
 from keras.src.backend.common import KerasVariable
-from keras.src.backend.common import dtypes
+from keras.src.backend.common import result_type
+from keras.src.backend.common import standardize_dtype
 from keras.src.backend.common.backend_utils import canonicalize_axis
 from keras.src.backend.common.backend_utils import normalize_shift_and_axis
-from keras.src.backend.common.variables import standardize_dtype
 from keras_openvino.src.ops.core import OpenVINOKerasTensor
 from keras_openvino.src.ops.core import convert_to_tensor
 from keras_openvino.src.ops.core import get_ov_output
@@ -36,7 +36,7 @@ def _promote_binary_op_types(x1, x2):
         if isinstance(x2, ov.Output)
         else getattr(x2, "dtype", type(x2))
     )
-    target_type = OPENVINO_DTYPES[dtypes.result_type(t1, t2)]
+    target_type = OPENVINO_DTYPES[result_type(t1, t2)]
     x1 = get_ov_output(x1, target_type)
     x2 = get_ov_output(x2, target_type)
     return x1, x2
@@ -53,9 +53,7 @@ def add(x1, x2):
 def einsum(subscripts, *operands, **kwargs):
     inputs = [get_ov_output(operand) for operand in operands]
     keras_types = [ov_to_keras_type(inp.get_element_type()) for inp in inputs]
-    result_dtype = (
-        dtypes.result_type(*keras_types) if keras_types else config.floatx()
-    )
+    result_dtype = result_type(*keras_types) if keras_types else config.floatx()
     if set(keras_types) == {"int8"}:
         result_dtype = "int32"
     ov_result_type = OPENVINO_DTYPES[result_dtype]
@@ -369,9 +367,7 @@ def arange(start, stop=None, step=None, dtype=None):
         keras_dtype = (
             standardize_dtype(dtype)
             if dtype is not None
-            else dtypes.result_type(
-                type(_start), type(_stop), type(_step), "int32"
-            )
+            else result_type(type(_start), type(_stop), type(_step), "int32")
         )
         return OpenVINOKerasTensor(
             ov_opset.constant(
@@ -391,7 +387,7 @@ def arange(start, stop=None, step=None, dtype=None):
         ov_type = OPENVINO_DTYPES[standardize_dtype(dtype)]
     else:
         ov_type = OPENVINO_DTYPES[
-            dtypes.result_type(
+            result_type(
                 ov_to_keras_type(start.get_element_type()),
                 ov_to_keras_type(stop.get_element_type()),
                 ov_to_keras_type(step.get_element_type()),
@@ -459,10 +455,10 @@ def arctan2(x1, x2):
 
     x1_type = ov_to_keras_type(x1.get_element_type())
     x2_type = ov_to_keras_type(x2.get_element_type())
-    result_type = dtypes.result_type(x1_type, x2_type, float)
-    result_type = OPENVINO_DTYPES[result_type]
-    x1 = ov_opset.convert(x1, result_type)
-    x2 = ov_opset.convert(x2, result_type)
+    output_dtype = result_type(x1_type, x2_type, float)
+    output_dtype = OPENVINO_DTYPES[output_dtype]
+    x1 = ov_opset.convert(x1, output_dtype)
+    x2 = ov_opset.convert(x2, output_dtype)
 
     nan_x1 = ov_opset.is_nan(x1)
     nan_x2 = ov_opset.is_nan(x2)
@@ -1311,7 +1307,7 @@ def concatenate(xs, axis=0):
         axis = 0
     keras_types = [ov_to_keras_type(x.get_element_type()) for x in elems]
     if keras_types:
-        target_type = dtypes.result_type(*keras_types)
+        target_type = result_type(*keras_types)
         ov_target_type = OPENVINO_DTYPES[target_type]
         elems = [
             ov_opset.convert(x, ov_target_type).output(0)
@@ -1343,7 +1339,7 @@ def copysign(x1, x2):
     x1, x2 = _align_operand_types(x1, x2, "copysign()")
     x1_keras = ov_to_keras_type(x1.get_element_type())
     x2_keras = ov_to_keras_type(x2.get_element_type())
-    dtype = dtypes.result_type(x1_keras, x2_keras, float)
+    dtype = result_type(x1_keras, x2_keras, float)
     ov_dtype = OPENVINO_DTYPES[dtype]
     x1 = ov_opset.convert(x1, ov_dtype).output(0)
     x2 = ov_opset.convert(x2, ov_dtype).output(0)
@@ -3063,9 +3059,9 @@ def median(x, axis=None, keepdims=False):
 
     # Convert to float for median calculation
     x1_type = ov_to_keras_type(sorted_values.get_element_type())
-    result_type = dtypes.result_type(x1_type, float)
-    result_type = OPENVINO_DTYPES[result_type]
-    sorted_values = ov_opset.convert(sorted_values, result_type).output(0)
+    output_dtype = result_type(x1_type, float)
+    output_dtype = OPENVINO_DTYPES[output_dtype]
+    sorted_values = ov_opset.convert(sorted_values, output_dtype).output(0)
 
     # Indices are relative to the truncated `k_top` elements.
     k_mod_2 = ov_opset.mod(
@@ -3112,7 +3108,7 @@ def median(x, axis=None, keepdims=False):
     # Average the two middle elements for even case
     even_sum = ov_opset.add(even_result1, even_result2).output(0)
     even_result = ov_opset.divide(
-        even_sum, ov_opset.constant(2.0, result_type).output(0)
+        even_sum, ov_opset.constant(2.0, output_dtype).output(0)
     ).output(0)
 
     # Select between odd and even results
@@ -3548,7 +3544,7 @@ def nanquantile(x, q, axis=None, method="linear", keepdims=False):
         )
 
     x_keras_type = ov_to_keras_type(x_type)
-    compute_dtype = dtypes.result_type(x_keras_type, float)
+    compute_dtype = result_type(x_keras_type, float)
     compute_ov_type = OPENVINO_DTYPES[compute_dtype]
     x = ov_opset.convert(x, compute_ov_type).output(0)
     q_f64 = ov_opset.convert(q_ov, Type.f64).output(0)
@@ -3722,7 +3718,7 @@ def nanvar(x, axis=None, keepdims=False):
     x = get_ov_output(x)
     x_type = x.get_element_type()
     x_keras = ov_to_keras_type(x_type)
-    result_dtype = dtypes.result_type(x_keras, float)
+    result_dtype = result_type(x_keras, float)
     ov_result_type = OPENVINO_DTYPES[result_dtype]
 
     # Compute in float32 due to OpenVINO f64 limitation
@@ -3979,7 +3975,7 @@ def quantile(x, q, axis=None, method="linear", keepdims=False):
     compute_dtype = (
         config.floatx()
         if x_keras_type in ("int64", "bool")
-        else dtypes.result_type(x_keras_type, float)
+        else result_type(x_keras_type, float)
     )
     compute_ov_type = OPENVINO_DTYPES[compute_dtype]
     x = ov_opset.convert(x, compute_ov_type).output(0)
@@ -4931,10 +4927,10 @@ def divide(x1, x2):
     x2 = get_ov_output(x2, element_type)
     x1_type = ov_to_keras_type(x1.get_element_type())
     x2_type = ov_to_keras_type(x2.get_element_type())
-    result_type = dtypes.result_type(x1_type, x2_type, float)
-    result_type = OPENVINO_DTYPES[result_type]
-    x1 = ov_opset.convert(x1, result_type).output(0)
-    x2 = ov_opset.convert(x2, result_type).output(0)
+    output_dtype = result_type(x1_type, x2_type, float)
+    output_dtype = OPENVINO_DTYPES[output_dtype]
+    x1 = ov_opset.convert(x1, output_dtype).output(0)
+    x2 = ov_opset.convert(x2, output_dtype).output(0)
     return OpenVINOKerasTensor(ov_opset.divide(x1, x2).output(0))
 
 
@@ -4970,7 +4966,7 @@ def power(x1, x2):
         if isinstance(x2, ov.Output)
         else getattr(x2, "dtype", type(x2))
     )
-    element_type = OPENVINO_DTYPES[dtypes.result_type(t1, t2)]
+    element_type = OPENVINO_DTYPES[result_type(t1, t2)]
     x1 = get_ov_output(x1, element_type)
     x2 = get_ov_output(x2, element_type)
     x1, x2 = _align_operand_types(x1, x2, "power()")
@@ -4983,7 +4979,7 @@ def float_power(x1, x2):
     x1, x2 = _align_operand_types(x1, x2, "float_power()")
     x1_keras = ov_to_keras_type(x1.get_element_type())
     x2_keras = ov_to_keras_type(x2.get_element_type())
-    dtype = dtypes.result_type(x1_keras, x2_keras, float)
+    dtype = result_type(x1_keras, x2_keras, float)
     ov_dtype = OPENVINO_DTYPES[dtype]
     x1 = ov_opset.convert(x1, ov_dtype).output(0)
     x2 = ov_opset.convert(x2, ov_dtype).output(0)
@@ -5002,7 +4998,7 @@ def nextafter(x1, x2):
 
     x1_keras = ov_to_keras_type(x1.get_element_type())
     x2_keras = ov_to_keras_type(x2.get_element_type())
-    dtype = dtypes.result_type(x1_keras, x2_keras, float)
+    dtype = result_type(x1_keras, x2_keras, float)
     ov_dtype = OPENVINO_DTYPES[dtype]
 
     # Step by one ULP of the *result* dtype, not of float64: a float64 ULP is
@@ -5424,16 +5420,16 @@ def correlate(x1, x2, mode="valid"):
     x2_type = x2.get_element_type()
     x1_type = ov_to_keras_type(x1_type)
     x2_type = ov_to_keras_type(x2_type)
-    result_type = dtypes.result_type(x1_type, x2_type, float)
+    output_dtype = result_type(x1_type, x2_type, float)
 
-    result_type = OPENVINO_DTYPES[result_type]
-    x1 = ov_opset.convert(x1, result_type).output(0)
-    x2 = ov_opset.convert(x2, result_type).output(0)
+    output_dtype = OPENVINO_DTYPES[output_dtype]
+    x1 = ov_opset.convert(x1, output_dtype).output(0)
+    x2 = ov_opset.convert(x2, output_dtype).output(0)
 
     shape_filter = ov_opset.shape_of(x2, Type.i64).output(0)
     const_two = ov_opset.constant(2, Type.f64).output(0)
     const_one = ov_opset.constant(1, Type.i64).output(0)
-    const_zero = ov_opset.constant(0, result_type).output(0)
+    const_zero = ov_opset.constant(0, output_dtype).output(0)
     shape_filter_minus_one = ov_opset.subtract(shape_filter, const_one).output(
         0
     )
@@ -5504,7 +5500,7 @@ def slogdet(x):
 
     # Promote to result type (e.g. float32 -> float64 if needed)
     keras_type = ov_to_keras_type(x_ov_type)
-    result_ov_type = OPENVINO_DTYPES[dtypes.result_type(keras_type, float)]
+    result_ov_type = OPENVINO_DTYPES[result_type(keras_type, float)]
     if x_ov_type != result_ov_type:
         x_ov = ov_opset.convert(x_ov, result_ov_type).output(0)
         x_ov_type = result_ov_type

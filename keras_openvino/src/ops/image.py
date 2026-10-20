@@ -4,8 +4,8 @@ import numpy as np
 import openvino.opset16 as ov_opset
 from openvino import Type
 
-from keras.src.backend.common.dtypes import result_type
-from keras.src.backend.common.variables import is_float_dtype
+from keras.src.backend.common import is_float_dtype
+from keras.src.backend.common import result_type
 from keras.src.backend.config import epsilon
 from keras.src.backend.config import standardize_data_format
 from keras.src.random.seed_generator import draw_seed
@@ -1417,13 +1417,13 @@ def map_coordinates(
             gathered = ov_opset.select(valid, gathered, fill_const).output(0)
 
         if any(w is not None for w in weights):
-            result_type = ov_type if not ov_type.is_integral() else Type.f32
-            contribution = ov_opset.convert(gathered, result_type).output(0)
+            output_dtype = ov_type if not ov_type.is_integral() else Type.f32
+            contribution = ov_opset.convert(gathered, output_dtype).output(0)
             for w in weights:
                 if w is not None:
                     contribution = ov_opset.multiply(
                         contribution,
-                        ov_opset.convert(w, result_type).output(0),
+                        ov_opset.convert(w, output_dtype).output(0),
                     ).output(0)
         else:
             contribution = gathered

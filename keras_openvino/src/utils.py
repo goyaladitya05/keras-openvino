@@ -3,6 +3,7 @@ import openvino as ov
 import openvino.opset16 as ov_opset
 
 from keras.src.backend.common import dtypes
+from keras.src.backend.common import result_type
 
 OPENVINO_DTYPES = {
     "float16": ov.Type.f16,
@@ -76,14 +77,14 @@ def align_operand_types(x1, x2, op_name, force_float=False):
     x1_type = ov_to_keras_type(x1_type)
     x2_type = ov_to_keras_type(x2_type)
     if force_float:
-        result_type = dtypes.result_type(x1_type, x2_type, float)
+        output_dtype = result_type(x1_type, x2_type, float)
     else:
-        result_type = dtypes.result_type(x1_type, x2_type)
-    result_type = OPENVINO_DTYPES[result_type]
-    if x1_type != result_type:
-        x1 = ov_opset.convert(x1, result_type).output(0)
-    if x2_type != result_type:
-        x2 = ov_opset.convert(x2, result_type).output(0)
+        output_dtype = result_type(x1_type, x2_type)
+    output_dtype = OPENVINO_DTYPES[output_dtype]
+    if x1_type != output_dtype:
+        x1 = ov_opset.convert(x1, output_dtype).output(0)
+    if x2_type != output_dtype:
+        x2 = ov_opset.convert(x2, output_dtype).output(0)
     return x1, x2
 
 

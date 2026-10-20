@@ -4,8 +4,8 @@ import openvino.opset16 as ov_opset
 
 from keras.src import callbacks as callbacks_module
 from keras.src import tree
-from keras.src.backend.common.masking import get_keras_mask
-from keras.src.backend.common.masking import set_keras_mask
+from keras.src.backend.common import get_keras_mask
+from keras.src.backend.common import set_keras_mask
 from keras.src.trainers.data_adapters import data_adapter_utils
 from keras.src.trainers.epoch_iterator import EpochIterator
 from keras.src.trainers.trainer import BaseTrainer

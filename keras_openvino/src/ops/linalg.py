@@ -7,8 +7,8 @@ from openvino import Model
 from openvino import Type
 
 from keras.src.backend import config
-from keras.src.backend.common import dtypes
-from keras.src.backend.common.variables import standardize_dtype
+from keras.src.backend.common import result_type
+from keras.src.backend.common import standardize_dtype
 from keras_openvino.src.ops.core import OpenVINOKerasTensor
 from keras_openvino.src.ops.core import cast
 from keras_openvino.src.ops.core import convert_to_numpy
@@ -1120,7 +1120,7 @@ def norm(x, ord=None, axis=None, keepdims=False):
     if standardize_dtype(x.dtype) == "int64":
         dtype = config.floatx()
     else:
-        dtype = dtypes.result_type(x.dtype, float)
+        dtype = result_type(x.dtype, float)
     x = cast(x, dtype)
 
     x_ov = get_ov_output(x)
