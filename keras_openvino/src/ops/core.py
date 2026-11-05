@@ -819,13 +819,15 @@ def convert_to_numpy(x):
         if ov_result.get_element_type() == Type.boolean:
             ov_result = ov_opset.convert(ov_result, Type.i32).output(0)
             casted_from_bool = True
-        ov_model = Model(results=[ov_result], parameters=[])
+        ov_model, feeds = _with_runtime_loops(
+            Model(results=[ov_result], parameters=[])
+        )
         ov_compiled_model = compile_model(
             ov_model,
             get_device(),
             config={"INFERENCE_PRECISION_HINT": "f32"},
         )
-        result = ov_compiled_model({})[0]
+        result = ov_compiled_model(feeds)[0]
         if casted_from_bool:
             result = result.astype(bool)
     except Exception as inner_exception:
@@ -837,6 +839,32 @@ def convert_to_numpy(x):
     if x.dtype == "bfloat16" and data.dtype != ml_dtypes.bfloat16:
         data = data.view(ml_dtypes.bfloat16)
     return data
+
+
+def _with_runtime_loops(model):
+    """Makes the CPU plugin run Loops at inference instead of compile time.
+
+    A Loop with only constant inputs is evaluated while compiling, which
+    fails or crashes when its body has dynamic shapes. Feeding a zero into the
+    trip count of each Loop of a copy of `model` avoids that.
+    """
+    if not any(op.get_type_name() == "Loop" for op in model.get_ordered_ops()):
+        return model, {}
+    model = model.clone()
+    feeds = {}
+    for op in model.get_ordered_ops():
+        if op.get_type_name() != "Loop":
+            continue
+        trip_count = op.input(0).get_source_output()
+        zero = ov_opset.parameter([], trip_count.get_element_type())
+        op.input(0).replace_source_output(
+            ov_opset.add(trip_count, zero).output(0)
+        )
+        model.add_parameters([zero])
+        feeds[len(feeds)] = np.zeros(
+            (), dtype=trip_count.get_element_type().to_dtype()
+        )
+    return model, feeds
 
 
 def is_tensor(x):
