@@ -1375,13 +1375,20 @@ def switch(index, branches, *operands):
             flat = [get_ov_output(o) for o in raw]
         else:
             flat = [get_ov_output(raw)]
-        return params, Model(flat, params), raw
+        flat, captures = _lift_captured_values(flat, params)
+        body = Model(flat, params + [p for p, _ in captures])
+        return params, body, raw, captures
 
     def _build(branch_idx):
         inner_outputs = None
-        then_params, then_body, then_raw = _trace_branch(branches[branch_idx])
+        then_params, then_body, then_raw, then_captures = _trace_branch(
+            branches[branch_idx]
+        )
+        else_captures = []
         if branch_idx == n - 2:
-            else_params, else_body, _ = _trace_branch(branches[branch_idx + 1])
+            else_params, else_body, _, else_captures = _trace_branch(
+                branches[branch_idx + 1]
+            )
         else:
             inner_outputs, _ = _build(branch_idx + 1)
             else_params, pt_results = [], []
@@ -1410,6 +1417,10 @@ def switch(index, branches, *operands):
                 if_node.set_input(ov_inp, tp, None)
             for inner_out, ep in zip(inner_outputs, else_params):
                 if_node.set_input(inner_out, None, ep)
+        for tp, outer_value in then_captures:
+            if_node.set_input(outer_value, tp, None)
+        for ep, outer_value in else_captures:
+            if_node.set_input(outer_value, None, ep)
 
         outputs = [
             if_node.set_output(then_body.results[i], else_body.results[i])
@@ -1430,43 +1441,120 @@ def switch(index, branches, *operands):
         return wrapped[0]
 
 
-def _walk_body_nodes(results, params):
-    """Yield the loop body nodes reachable from `results`."""
-    boundary = {p.get_instance_id() for p in params}
+def _static_value(output, max_nodes=64):
+    """Folds a small constant-only subgraph to a scalar, or returns None."""
+    order, seen, stack = [], set(), [output.get_node()]
+    while stack:
+        node = stack.pop()
+        if node.get_instance_id() in seen:
+            continue
+        seen.add(node.get_instance_id())
+        if (
+            node.get_type_name() == "Parameter"
+            or len(seen) > max_nodes
+            or Type.bf16 in [o.get_element_type() for o in node.outputs()]
+        ):
+            return None
+        order.append(node)
+        stack.extend(i.get_source_output().get_node() for i in node.inputs())
+    values = {}
+    for node in sorted(order, key=lambda n: n.get_instance_id()):
+        if node.get_type_name() == "Constant":
+            values[(node.get_instance_id(), 0)] = Tensor(node.data)
+            continue
+        if node.get_output_partial_shape(0).is_dynamic:
+            return None
+        inputs = [
+            values[
+                (
+                    i.get_source_output().get_node().get_instance_id(),
+                    i.get_source_output().get_index(),
+                )
+            ]
+            for i in node.inputs()
+        ]
+        outputs = [
+            Tensor(o.get_element_type(), o.get_shape()) for o in node.outputs()
+        ]
+        if not node.evaluate(outputs, inputs):
+            return None
+        for index, tensor in enumerate(outputs):
+            values[(node.get_instance_id(), index)] = tensor
+    result = values[(output.get_node().get_instance_id(), output.get_index())]
+    data = np.array(result.data)
+    return data.item() if data.size == 1 else None
+
+
+def _lift_captured_values(results, params):
+    """Feeds outer values used by a body through new body Parameters.
+
+    Returns the body results and a list of `(parameter, outer_value)` pairs.
+    Only edges from nodes that depend on `params` are rewired, so the outer
+    graph is left untouched.
+    """
+    declared = {p.get_instance_id() for p in params}
+    # Nodes created before the body parameters cannot depend on them.
+    oldest = min(declared, default=0)
+    depends = {}
+    stack = [r.get_node() for r in results] if declared else []
+    while stack:
+        node = stack[-1]
+        node_id = node.get_instance_id()
+        if node_id in depends:
+            stack.pop()
+            continue
+        if node_id in declared:
+            depends[node_id] = True
+        elif node_id < oldest or node.get_type_name() in (
+            "Parameter",
+            "Constant",
+        ):
+            depends[node_id] = False
+        else:
+            sources = [i.get_source_output().get_node() for i in node.inputs()]
+            pending = [n for n in sources if n.get_instance_id() not in depends]
+            if pending:
+                stack.extend(pending)
+                continue
+            depends[node_id] = any(
+                depends[n.get_instance_id()] for n in sources
+            )
+        stack.pop()
+
+    lifted = {}
+    captures = []
+
+    def lift(output):
+        node = output.get_node()
+        if depends.get(node.get_instance_id(), False):
+            return output
+        if node.get_type_name() == "Constant":
+            return output
+        key = (node.get_instance_id(), output.get_index())
+        if key not in lifted:
+            param = ov_opset.parameter(
+                output.get_partial_shape(), output.get_element_type()
+            )
+            lifted[key] = param
+            captures.append((param, output))
+        return lifted[key].output(0)
+
     seen = set()
     stack = [r.get_node() for r in results]
     while stack:
         node = stack.pop()
         node_id = node.get_instance_id()
-        if node_id in seen:
+        if node_id in seen or not depends.get(node_id, False):
             continue
         seen.add(node_id)
-        yield node
-        if node_id in boundary:
-            continue
-        for node_input in node.inputs():
-            stack.append(node_input.get_source_output().get_node())
-
-
-def _collect_captured_parameters(results, params):
-    """Return outer-graph Parameters captured by the loop body."""
-    declared = {p.get_instance_id() for p in params}
-    captured = {}
-    for node in _walk_body_nodes(results, params):
-        node_id = node.get_instance_id()
-        if node.get_type_name() == "Parameter" and node_id not in declared:
-            captured[node_id] = node
-    return [captured[k] for k in sorted(captured)]
-
-
-def _rewire_within(results, params, old_param, new_param):
-    """Rewire the body's uses of `old_param` to `new_param`."""
-    target = old_param.get_instance_id()
-    for node in _walk_body_nodes(results, params):
         for node_input in node.inputs():
             source = node_input.get_source_output()
-            if source.get_node().get_instance_id() == target:
-                node_input.replace_source_output(new_param.output(0))
+            replacement = lift(source)
+            if replacement is not source:
+                node_input.replace_source_output(replacement)
+            else:
+                stack.append(source.get_node())
+    return [lift(r) for r in results], captures
 
 
 def while_loop(
@@ -1524,9 +1612,29 @@ def while_loop(
         else get_ov_output(maximum_iterations)
     )
 
-    trip_count = maximum_iterations
-    execution_condition = ov_opset.constant(True, Type.boolean).output(0)
-    loop = ov_opset.loop(trip_count, execution_condition)
+    def call(fn, args):
+        return fn(args) if isinstance(args, dict) else fn(*args)
+
+    def to_condition(value):
+        value = get_ov_output(value)
+        if len(value.get_partial_shape()) != 0:
+            raise ValueError(
+                "`cond` function must return a scalar boolean value, "
+                "but got shape {}".format(value.get_partial_shape())
+            )
+        if value.get_element_type() != Type.boolean:
+            value = ov_opset.convert(value, Type.boolean).output(0)
+        return value
+
+    init_args, _ = pack_structure(
+        loop_vars, [OpenVINOKerasTensor(v) for v in loop_vars_ov]
+    )
+    execution_condition = to_condition(call(cond, init_args))
+    # OpenVINO fails on a Loop that it can tell runs zero times.
+    for value, never in ((execution_condition, False), (maximum_iterations, 0)):
+        if _static_value(value) == never:
+            return init_args[0] if is_scalar_input else init_args
+    loop = ov_opset.loop(maximum_iterations, execution_condition)
 
     shapes = [var.get_partial_shape() for var in loop_vars_ov]
     types = [var.get_element_type() for var in loop_vars_ov]
@@ -1536,59 +1644,36 @@ def while_loop(
     param_tensors = [OpenVINOKerasTensor(p.output(0)) for p in params]
 
     packed_args, _ = pack_structure(loop_vars, param_tensors)
-    if isinstance(packed_args, dict):
-        body_out = body(packed_args)
-    else:
-        body_out = body(*packed_args)
-
+    body_out = call(body, packed_args)
     if not isinstance(body_out, (list, tuple, dict)):
         body_out = (body_out,)
+    cond_output = to_condition(call(cond, body_out))
 
-    flat_body_out = flatten_structure(body_out)
-    if isinstance(packed_args, dict):
-        cond_output = get_ov_output(cond(body_out))
-    else:
-        cond_output = get_ov_output(cond(*body_out))
+    next_values = []
+    for p, out in zip(params, flatten_structure(body_out)):
+        out = get_ov_output(out)
+        if out.get_element_type() != p.get_element_type():
+            out = ov_opset.convert(out, p.get_element_type()).output(0)
+        p.set_partial_shape(out.get_partial_shape())
+        next_values.append(out)
 
-    if len(cond_output.get_partial_shape()) != 0:
-        raise ValueError(
-            "`cond` function must return a scalar boolean value, "
-            "but got shape {}".format(cond_output.get_partial_shape())
-        )
-
-    for p, out in zip(params, flat_body_out):
-        out_shape = get_ov_output(out).get_partial_shape()
-        p.set_partial_shape(out_shape)
-
-    results = [cond_output] + [get_ov_output(x) for x in flat_body_out]
-
-    # Bind tensors captured from the outer graph as invariant inputs.
-    captured = _collect_captured_parameters(results, params)
-    invariant_inputs = []
-    loop_var_params = list(params)
-    for outer_param in captured:
-        inner_param = ov_opset.parameter(
-            outer_param.get_partial_shape(), outer_param.get_element_type()
-        )
-        _rewire_within(results, params, outer_param, inner_param)
-        params.append(inner_param)
-        invariant_inputs.append((inner_param, outer_param.output(0)))
-
-    body_func = Model(results=results, parameters=params)
+    results, captures = _lift_captured_values(
+        [cond_output] + next_values, params
+    )
+    next_values = results[1:]
+    body_func = Model(
+        results=results, parameters=params + [p for p, _ in captures]
+    )
     loop.set_function(body_func)
     loop.set_special_body_ports([-1, 0])
 
-    for param, init_val, next_val in zip(
-        loop_var_params, loop_vars_ov, flat_body_out
-    ):
-        loop.set_merged_input(param, init_val, get_ov_output(next_val))
-
-    for inner_param, outer_value in invariant_inputs:
+    for param, init_val, next_val in zip(params, loop_vars_ov, next_values):
+        loop.set_merged_input(param, init_val, next_val)
+    for inner_param, outer_value in captures:
         loop.set_invariant_input(inner_param, outer_value)
 
     outputs_flat = [
-        OpenVINOKerasTensor(loop.get_iter_value(get_ov_output(val)))
-        for val in flat_body_out
+        OpenVINOKerasTensor(loop.get_iter_value(val)) for val in next_values
     ]
     final_output, _ = pack_structure(loop_vars, outputs_flat)
 
