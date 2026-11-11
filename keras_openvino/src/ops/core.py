@@ -652,6 +652,11 @@ def get_ov_output(x, ov_type=None, context_dtype=None):
         else:
             x = ov_opset.constant(x).output(0)
     elif isinstance(x, (list, tuple)):
+        if _has_tensor(x):
+            x = convert_to_tensor(x).output
+            if ov_type is not None and x.get_element_type() != ov_type:
+                x = ov_opset.convert(x, ov_type).output(0)
+            return x
         if isinstance(x, tuple):
             x = list(x)
         if ov_type is None:
@@ -659,7 +664,12 @@ def get_ov_output(x, ov_type=None, context_dtype=None):
         else:
             x = ov_opset.constant(x, ov_type).output(0)
     elif np.isscalar(x):
-        x = ov_opset.constant(x).output(0)
+        if ov_type is None and getattr(x, "dtype", None) == "bfloat16":
+            ov_type = Type.bf16
+        if ov_type is None:
+            x = ov_opset.constant(x).output(0)
+        else:
+            x = _constant(np.array(x), ov_type)
     elif isinstance(x, KerasVariable):
         if isinstance(x.value, OpenVINOKerasTensor):
             return x.value.output
@@ -717,6 +727,31 @@ def _is_scalar(elem):
     return not isinstance(elem, (list, tuple, set, dict))
 
 
+def _constant(x, ov_type):
+    if ov_type in (Type.bf16, Type.f16) and x.dtype in (np.float32, np.float64):
+        # Out-of-range values round to inf, as in NumPy, instead of failing.
+        x = ov_opset.constant(x.astype(np.float32)).output(0)
+        return ov_opset.convert(x, ov_type).output(0)
+    return ov_opset.constant(x, ov_type).output(0)
+
+
+def _has_tensor(x):
+    return any(
+        isinstance(e, (OpenVINOKerasTensor, KerasVariable))
+        for e in tree.flatten(x)
+    )
+
+
+def _stack_nested(x, dtype):
+    if not isinstance(x, (list, tuple)):
+        return get_ov_output(convert_to_tensor(x, dtype))
+    axis = ov_opset.constant(0, Type.i32).output(0)
+    elems = [
+        ov_opset.unsqueeze(_stack_nested(e, dtype), axis).output(0) for e in x
+    ]
+    return ov_opset.concat(elems, 0).output(0)
+
+
 def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
     if sparse:
         raise ValueError("`sparse=True` is not supported with openvino backend")
@@ -733,7 +768,7 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
             ov_type = OPENVINO_DTYPES[dtype]
         else:
             ov_type = OPENVINO_DTYPES[standardize_dtype(x.dtype)]
-        return OpenVINOKerasTensor(ov_opset.constant(x, ov_type).output(0))
+        return OpenVINOKerasTensor(_constant(x, ov_type))
     elif isinstance(x, (list, tuple)):
         if dtype is None:
             dtype = result_type(
@@ -742,6 +777,8 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
                     for item in tree.flatten(x)
                 ]
             )
+        if _has_tensor(x):
+            return OpenVINOKerasTensor(_stack_nested(x, dtype))
         x = np.array(x, dtype=dtype)
         ov_type = OPENVINO_DTYPES[dtype]
         return OpenVINOKerasTensor(ov_opset.constant(x, ov_type).output(0), x)
@@ -764,8 +801,7 @@ def convert_to_tensor(x, dtype=None, sparse=None, ragged=None):
             ov_type = OPENVINO_DTYPES[standardize_dtype(dtype)]
         else:
             ov_type = OPENVINO_DTYPES[dtype]
-        x = np.array(x)
-        return OpenVINOKerasTensor(ov_opset.constant(x, ov_type).output(0))
+        return OpenVINOKerasTensor(_constant(np.array(x), ov_type))
     except Exception as e:
         raise TypeError(
             f"Cannot convert object of type {original_type} "

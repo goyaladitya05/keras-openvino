@@ -371,7 +371,8 @@ def arange(start, stop=None, step=None, dtype=None):
         )
         return OpenVINOKerasTensor(
             ov_opset.constant(
-                np.arange(_start, _stop, _step, dtype=keras_dtype)
+                np.arange(_start, _stop, _step, dtype=keras_dtype),
+                OPENVINO_DTYPES[keras_dtype],
             ).output(0)
         )
 
