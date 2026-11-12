@@ -126,8 +126,8 @@ jobs:
       - name: Checkout keras-hub
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: keras-team/keras-hub
-          ref: master
+          repository: goyaladitya05/keras-hub
+          ref: hub-hook
           path: keras-hub
           persist-credentials: false
 
@@ -153,6 +153,19 @@ jobs:
         run: |
           set -o pipefail
           pytest keras_hub -n auto --dist loadfile | tee "$RUNNER_TEMP/pytest.log"
+
+      - name: Run integration tests
+        working-directory: ./keras-hub/integration_tests
+        run: |
+          set -o pipefail
+          pytest . -k "not NoTensorflow" | tee -a "$RUNNER_TEMP/pytest.log"
+
+      - name: Run no tensorflow integration test
+        working-directory: ./keras-hub/integration_tests
+        run: |
+          set -o pipefail
+          pip uninstall -y tensorflow-text tensorflow
+          pytest . -k "NoTensorflow" | tee -a "$RUNNER_TEMP/pytest.log"
 
       - name: Collect failed tests
         id: summary
